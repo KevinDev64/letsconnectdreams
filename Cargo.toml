@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bcrypt = "0.18.0"
 diesel = { version = "2.3.6", features = ["postgres", "network-address", "numeric"] }
 dotenvy = { version = "0.15" }
 ipnetwork = "0.21.1"
+rand = "0.10.0"
