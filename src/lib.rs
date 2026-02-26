@@ -120,7 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auth_test_user() {
+    fn auth_test_on_user() {
         let mut conn = establish_connection();
         let test_user = new_user(
             &mut conn, 
@@ -134,5 +134,22 @@ mod tests {
             );
         delete_user(&mut conn, test_user.username);
         assert_eq!(result, Ok(true))
+    }
+
+    #[test]
+    fn wrong_auth_on_test_user() {
+        let mut conn = establish_connection();
+        let test_user = new_user(
+            &mut conn, 
+            String::from("test"), 
+            String::from("secret")
+        );
+        let result = validate_password(
+            &mut conn, 
+            test_user.username.clone(), 
+            String::from("SECRET")
+            );
+        delete_user(&mut conn, test_user.username);
+        assert_eq!(result, Ok(false))
     }
 }
