@@ -1,20 +1,75 @@
-use diesel::prelude::*;
-use self::models::*;
 use letsconnectdreams::*;
+use std::io::prelude::*;
+use std::net::{TcpListener, TcpStream, Shutdown};
+use std::str;
+
+fn abort_message(client: NetworkClient, stream: TcpStream)  -> Result<(), std::io::Error> {
+    println!("ABORTT message from {}", client.peer);
+    stream.shutdown(Shutdown::Both)
+}
+
+fn receive_data(mut stream: &TcpStream, data_length: u32) -> Result<String, Box<dyn std::error::Error>> {
+    let mut data_buffer = vec![0_u8; data_length.try_into().unwrap()];
+    stream.read(&mut data_buffer)?;
+    let data = str::from_utf8(&mut data_buffer)?.to_owned();
+    Ok(data)
+}
+
+fn echo_message(client: NetworkClient, raw_length: &[u8; 4], stream: &mut TcpStream) {
+    println!("ECHOOO message from {}", client.peer);
+    let length = u32::from_be_bytes(raw_length.to_owned());
+    println!("Length -> {}", length);
+
+    let data = receive_data(&stream, length).expect("Not valid data section! (not UTF-8)");
+    println!("Data -> {}", data);
+
+    println!("Sending ECHOOO as answer.");
+    let mut answer_buffer = [0_u8; 12];
+    answer_buffer[2..8].copy_from_slice(b"ECHOOO");
+    answer_buffer[8..12].copy_from_slice(&length.to_be_bytes());
+    stream.write_all(&answer_buffer).expect("Failed to send ECHOOO answer!");
+	stream.write_all(data.as_bytes()).expect("Failed to send data!");
+}
+
+fn handle_client(mut stream: TcpStream) {
+    loop {
+        let this_connection = NetworkClient {
+            peer: stream.peer_addr().expect("Unknown peer address!"),
+            is_authorized: false,
+            user: None
+        };
+
+        let mut header_buffer = [0; 12];
+        stream.read(&mut header_buffer).expect("Failed to read header!");
+        
+        if &header_buffer[..2] == [0; 2] {
+            println!("Client sent {:?}", &header_buffer[2..12]);
+            let mut raw_length: Vec<u8> = vec![0; 4];
+            raw_length[..].clone_from_slice(&header_buffer[8..12]);
+            let raw_length = raw_length.as_array().unwrap();
+            match str::from_utf8(&header_buffer[2..8]).unwrap() {
+                "ABORTT" => {
+                    abort_message(this_connection, stream).unwrap();
+                    break;
+                },
+                "ECHOOO" => {
+                    echo_message(this_connection, raw_length, &mut stream);
+                }
+                "\0\0\0\0\0\0" => {
+                    println!("Client closed the connection.");
+                    break;
+                }
+                _ => panic!("Wrong message type in header!"),
+            }
+        }
+    }
+}
 
 fn main() {
-    use self::schema::users::dsl::*;
-
-    let connection = &mut establish_connection();
-    let results = users
-        .select(User::as_select())
-        .load(connection)
-        .expect("Failed to load users!");
-
-    println!("Showing {} users", results.len());
-    for result in results {
-        println!("Username: {}", result.username);
-        println!("Presence: {}", result.presence);
-        println!("---------------");
+    let listener = TcpListener::bind("127.0.0.1:4222")
+        .expect("Failed to bind address!");
+    
+    for stream in listener.incoming() {
+        handle_client(stream.unwrap());
     }
 }
