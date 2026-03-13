@@ -1,9 +1,12 @@
 use letsconnectdreams::*;
+use rsa::pkcs1::EncodeRsaPublicKey;
+use rsa::traits::PublicKeyParts;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream, Shutdown};
+use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use std::str;
 
-fn abort_message(client: NetworkClient, stream: TcpStream)  -> Result<(), std::io::Error> {
+fn abort_message(client: NetworkClient, stream: TcpStream) -> Result<(), std::io::Error> {
     println!("ABORTT message from {}", client.peer);
     stream.shutdown(Shutdown::Both)
 }
@@ -31,7 +34,23 @@ fn echo_message(client: NetworkClient, raw_length: &[u8; 4], stream: &mut TcpStr
 	stream.write_all(data.as_bytes()).expect("Failed to send data!");
 }
 
-fn handle_client(mut stream: TcpStream) {
+fn pubkey_message(client: NetworkClient, pub_key: RsaPublicKey, stream: &mut TcpStream) {
+    println!("PUBKEY message from {}", client.peer);
+    let pub_key_raw = pub_key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+    let pub_key_raw = pub_key_raw.as_bytes();
+    let data_lenght: u32 = pub_key_raw.len() as u32;
+
+    let mut header_buffer = [0_u8; 12];
+    header_buffer[2..8].copy_from_slice(b"PUBKEY");
+    header_buffer[8..12].copy_from_slice(&data_lenght.to_be_bytes());
+    stream.write_all(&header_buffer).expect("Failed to send PUBKEY header!");
+    stream.write_all(pub_key_raw).expect("Failed to send PUBKEY data!");
+}
+
+fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKey)) {
+    let priv_key = keypair.0;
+    let pub_key = keypair.1;
+
     loop {
         let this_connection = NetworkClient {
             peer: stream.peer_addr().expect("Unknown peer address!"),
@@ -54,7 +73,10 @@ fn handle_client(mut stream: TcpStream) {
                 },
                 "ECHOOO" => {
                     echo_message(this_connection, raw_length, &mut stream);
-                }
+                },
+                "PUBKEY" => {
+                    pubkey_message(this_connection, pub_key.clone(), &mut stream);
+                },
                 "\0\0\0\0\0\0" => {
                     println!("Client closed the connection.");
                     break;
@@ -70,6 +92,6 @@ fn main() {
         .expect("Failed to bind address!");
     
     for stream in listener.incoming() {
-        handle_client(stream.unwrap());
+        handle_client(stream.unwrap(), get_rsa_keypair());
     }
 }

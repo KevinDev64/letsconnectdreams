@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use dotenvy::dotenv;
 use rand::rngs::OsRng;
-use rsa::traits::PaddingScheme;
+use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
 use std::{env, fmt::Display};
 
 use std::net::SocketAddr;
@@ -153,9 +153,23 @@ pub fn rsa_encrypt_message(public_key: &RsaPublicKey, message: &[u8]) -> Vec<u8>
 }
 
 pub fn rsa_decrypt_message(private_key: &RsaPrivateKey, message: &[u8]) -> Vec<u8> {
-    let mut rng = OsRng;
     private_key.decrypt(Pkcs1v15Encrypt, message)
         .expect("Failed to decrypt message!")
+}
+
+pub fn get_rsa_keypair() -> (RsaPrivateKey, RsaPublicKey) {
+    let priv_key = match RsaPrivateKey::read_pkcs1_pem_file("priv_key.pem") {
+        Ok(key) => key,
+        Err(e) => {
+            println!("Private key file not found! {e}");
+            let (priv_key, _pub_key) = generate_rsa_keypair();
+            priv_key.write_pkcs1_pem_file("priv_key.pem", rsa::pkcs8::LineEnding::LF)
+                .expect("Failed to write private key file!");
+            priv_key
+        }
+    };
+    let pub_key = priv_key.to_public_key();
+    (priv_key, pub_key)
 }
 
 
