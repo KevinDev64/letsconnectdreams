@@ -1,9 +1,9 @@
+use diesel::PgConnection;
 use letsconnectdreams::*;
 use rsa::pkcs1::EncodeRsaPublicKey;
-use rsa::traits::PublicKeyParts;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream, Shutdown};
-use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::str;
 
 fn abort_message(client: NetworkClient, stream: TcpStream) -> Result<(), std::io::Error> {
@@ -11,11 +11,17 @@ fn abort_message(client: NetworkClient, stream: TcpStream) -> Result<(), std::io
     stream.shutdown(Shutdown::Both)
 }
 
-fn receive_data(mut stream: &TcpStream, data_length: u32) -> Result<String, Box<dyn std::error::Error>> {
+fn receive_utf8_data(mut stream: &TcpStream, data_length: u32) -> Result<String, Box<dyn std::error::Error>> {
     let mut data_buffer = vec![0_u8; data_length.try_into().unwrap()];
     stream.read(&mut data_buffer)?;
     let data = str::from_utf8(&mut data_buffer)?.to_owned();
     Ok(data)
+}
+
+fn receive_raw_data(mut stream: &TcpStream, data_length: u32) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut data_buffer = vec![0_u8; data_length.try_into().unwrap()];
+    stream.read(&mut data_buffer)?;
+    Ok(data_buffer)
 }
 
 fn echo_message(client: NetworkClient, raw_length: &[u8; 4], stream: &mut TcpStream) {
@@ -23,7 +29,7 @@ fn echo_message(client: NetworkClient, raw_length: &[u8; 4], stream: &mut TcpStr
     let length = u32::from_be_bytes(raw_length.to_owned());
     println!("Length -> {}", length);
 
-    let data = receive_data(&stream, length).expect("Not valid data section! (not UTF-8)");
+    let data = receive_utf8_data(&stream, length).expect("Not valid data section! (not UTF-8)");
     println!("Data -> {}", data);
 
     println!("Sending ECHOOO as answer.");
@@ -38,16 +44,40 @@ fn pubkey_message(client: NetworkClient, pub_key: RsaPublicKey, stream: &mut Tcp
     println!("PUBKEY message from {}", client.peer);
     let pub_key_raw = pub_key.to_pkcs1_pem(rsa::pkcs8::LineEnding::LF).unwrap();
     let pub_key_raw = pub_key_raw.as_bytes();
-    let data_lenght: u32 = pub_key_raw.len() as u32;
+    let data_length: u32 = pub_key_raw.len() as u32;
 
     let mut header_buffer = [0_u8; 12];
     header_buffer[2..8].copy_from_slice(b"PUBKEY");
-    header_buffer[8..12].copy_from_slice(&data_lenght.to_be_bytes());
+    header_buffer[8..12].copy_from_slice(&data_length.to_be_bytes());
     stream.write_all(&header_buffer).expect("Failed to send PUBKEY header!");
     stream.write_all(pub_key_raw).expect("Failed to send PUBKEY data!");
 }
 
-fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKey)) {
+fn authin_message(
+        mut client: NetworkClient, 
+        priv_key: RsaPrivateKey, 
+        raw_length: &[u8; 4],
+        conn: &mut PgConnection,
+        stream: &mut TcpStream) {
+    println!("AUTH request from {}", client.peer);
+    let length = u32::from_be_bytes(*raw_length); 
+    let data = receive_raw_data(stream, length).unwrap();
+    let auth_data = rsa_decrypt_message(&priv_key, &data);
+    let auth_data = UserAuthData::from_bytes(&auth_data);
+    if validate_password(conn, auth_data.username, auth_data.password).unwrap() {
+        // AUTHOK answer
+        let mut answer_buffer = [0_u8; 12];
+        answer_buffer[2..8].copy_from_slice(b"AUTHOK");
+        client.is_authorized = true; // TODO: when session closes -> change is_authorized to `false`
+    } else {
+        // AUTHER answer
+        let mut answer_buffer = [0_u8; 12];
+        answer_buffer[2..8].copy_from_slice(b"AUTHER");
+    }
+
+}
+
+fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKey), mut conn: PgConnection) {
     let priv_key = keypair.0;
     let pub_key = keypair.1;
 
@@ -77,6 +107,9 @@ fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKey)) 
                 "PUBKEY" => {
                     pubkey_message(this_connection, pub_key.clone(), &mut stream);
                 },
+                "AUTHIN" => {
+                    authin_message(this_connection, priv_key.clone(), raw_length, &mut conn, &mut stream);
+                },
                 "\0\0\0\0\0\0" => {
                     println!("Client closed the connection.");
                     break;
@@ -92,6 +125,6 @@ fn main() {
         .expect("Failed to bind address!");
     
     for stream in listener.incoming() {
-        handle_client(stream.unwrap(), get_rsa_keypair());
+        handle_client(stream.unwrap(), get_rsa_keypair(), establish_connection());
     }
 }

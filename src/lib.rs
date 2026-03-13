@@ -47,6 +47,18 @@ pub struct UserAuthData {
     pub password: String
 }
 
+impl UserAuthData {
+    pub fn from_bytes(auth_data: &[u8]) -> UserAuthData {
+        let mut auth_data = str::from_utf8(&auth_data)
+            .unwrap()
+            .split_ascii_whitespace();
+        let username = auth_data.next().unwrap().to_string();
+        let password = auth_data.next().unwrap().to_string();
+
+        UserAuthData { username, password }
+    }
+}
+
 impl TryFrom<i16> for NATType {
     type Error = ();
     fn try_from(value: i16) -> Result<Self, Self::Error> {
