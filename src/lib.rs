@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use dotenvy::dotenv;
 use rand::rngs::OsRng;
-use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
+use rsa::pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey};
 use std::{env, fmt::Display};
 
 use std::net::SocketAddr;
@@ -36,15 +36,19 @@ impl Display for Message {
     }
 }
 
+#[derive(Debug)]
 pub struct NetworkClient {
     pub peer: SocketAddr,
     pub is_authorized: bool,
-    pub user: Option<User>
+    pub user: Option<User>,
+    pub auth_data: Option<UserAuthData>
 }
 
+#[derive(Debug)]
 pub struct UserAuthData {
-    pub username: String,
-    pub password: String
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub pub_key: Option<RsaPublicKey>
 }
 
 impl UserAuthData {
@@ -52,10 +56,15 @@ impl UserAuthData {
         let mut auth_data = str::from_utf8(&auth_data)
             .unwrap()
             .split_ascii_whitespace();
-        let username = auth_data.next().unwrap().to_string();
-        let password = auth_data.next().unwrap().to_string();
+        let username = Some(auth_data.next().unwrap().to_string());
+        let password = Some(auth_data.next().unwrap().to_string()) ;
 
-        UserAuthData { username, password }
+        UserAuthData { username, password, pub_key: None }
+    }
+
+    pub fn init_pubkey(pub_key_string: String) -> UserAuthData {
+        let pub_key = Some(RsaPublicKey::from_pkcs1_pem(&pub_key_string).unwrap());
+        UserAuthData { username: None, password: None, pub_key }
     }
 }
 
