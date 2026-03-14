@@ -10,6 +10,6 @@ fn main() {
         .nth(2)
         .expect("Enter a valid password!");
 
-    let result = validate_password(&mut conn, username, password).unwrap();
+    let result = validate_password(&mut conn, &username, password).unwrap();
     println!("Is valid? -> {result}");
 }
