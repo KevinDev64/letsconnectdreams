@@ -130,7 +130,7 @@ pub fn hash_password(password: String) -> String {
     bcrypt::hash(password, DEFAULT_COST).unwrap()
 } 
 
-pub fn validate_password(conn: &mut PgConnection, input_username: String, input_password: String) -> Result<bool, String> {
+pub fn validate_password(conn: &mut PgConnection, input_username: &String, input_password: String) -> Result<bool, String> {
     use crate::schema::users::dsl::*;
 
     let db_password = match users
@@ -208,7 +208,7 @@ mod tests {
         );
         let result = validate_password(
             &mut conn, 
-            test_user.username.clone(), 
+            &test_user.username.clone(), 
             String::from("secret")
             );
         delete_user(&mut conn, test_user.username);
@@ -225,7 +225,7 @@ mod tests {
         );
         let result = validate_password(
             &mut conn, 
-            test_user.username.clone(), 
+            &test_user.username.clone(), 
             String::from("SECRET")
             );
         delete_user(&mut conn, test_user.username);

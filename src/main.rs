@@ -8,6 +8,7 @@ use std::str;
 
 fn abort_message(client: &mut NetworkClient, stream: TcpStream) -> Result<(), std::io::Error> {
     println!("ABORTT message from {}", client.peer);
+    client.is_authorized = false;
     stream.shutdown(Shutdown::Both)
 }
 
@@ -88,22 +89,23 @@ fn authin_message(
         raw_length: &[u8; 4],
         conn: &mut PgConnection,
         stream: &mut TcpStream) {
-    println!("AUTH request from {}", client.peer);
+    println!("AUTHIN request from {}", client.peer);
     let length = u32::from_be_bytes(*raw_length); 
     let data = receive_raw_data(stream, length).unwrap();
     let auth_data = rsa_decrypt_message(&priv_key, &data);
     let auth_data = UserAuthData::from_bytes(&auth_data);
-    if validate_password(conn, auth_data.username.unwrap(), auth_data.password.unwrap()).unwrap() {
-        // AUTHOK answer
+    if validate_password(conn, auth_data.username.as_ref().unwrap(), auth_data.password.unwrap()).unwrap() {
+        println!("Authorized {}", auth_data.username.unwrap());
         let mut answer_buffer = [0_u8; 12];
         answer_buffer[2..8].copy_from_slice(b"AUTHOK");
-        client.is_authorized = true; // TODO: when session closes -> change is_authorized to `false`
+        client.is_authorized = true; 
+        stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer");
     } else {
-        // AUTHER answer
+        println!("Wrong auth data for {}", auth_data.username.unwrap());
         let mut answer_buffer = [0_u8; 12];
         answer_buffer[2..8].copy_from_slice(b"AUTHER");
+        stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer");
     }
-
 }
 
 fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKey), mut conn: PgConnection) {
@@ -148,6 +150,7 @@ fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKey), 
                 },
                 "\0\0\0\0\0\0" => {
                     println!("Client closed the connection.");
+                    this_connection.is_authorized = false;
                     break;
                 }
                 _ => panic!("Wrong message type in header!"),
