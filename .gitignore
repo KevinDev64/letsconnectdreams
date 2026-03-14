@@ -1,3 +1,5 @@
 /target
 ./pgdata
 .env
+NOTES.md
+*.pem

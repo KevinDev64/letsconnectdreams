@@ -1,19 +1,18 @@
 use diesel::prelude::*;
 use dotenvy::dotenv;
-use std::env;
+use rand::rngs::OsRng;
+use rsa::pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey};
+use std::{env, fmt::Display};
+
+use std::net::SocketAddr;
 
 use self::models::{NewUser, User};
 use bcrypt::{self, DEFAULT_COST};
 
+use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
+
 pub mod models;
 pub mod schema;
-
-pub enum BcryptVersion {
-    TwoA,
-    TwoX,
-    TwoY,
-    TwoB,
-}
 
 pub enum NATType {
     Unknown = 0,
@@ -21,6 +20,52 @@ pub enum NATType {
     Restricted, 
     PortRestricted, 
     Symmetric 
+}
+
+pub enum Message {
+    AUTHIN(UserAuthData),
+    AUTHOK(String),
+    AUTHER(String),
+    ECHO(String),
+    ABORTT,
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self)
+    }
+}
+
+#[derive(Debug)]
+pub struct NetworkClient {
+    pub peer: SocketAddr,
+    pub is_authorized: bool,
+    pub user: Option<User>,
+    pub auth_data: Option<UserAuthData>
+}
+
+#[derive(Debug)]
+pub struct UserAuthData {
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub pub_key: Option<RsaPublicKey>
+}
+
+impl UserAuthData {
+    pub fn from_bytes(auth_data: &[u8]) -> UserAuthData {
+        let mut auth_data = str::from_utf8(&auth_data)
+            .unwrap()
+            .split_ascii_whitespace();
+        let username = Some(auth_data.next().unwrap().to_string());
+        let password = Some(auth_data.next().unwrap().to_string()) ;
+
+        UserAuthData { username, password, pub_key: None }
+    }
+
+    pub fn init_pubkey(pub_key_string: String) -> UserAuthData {
+        let pub_key = Some(RsaPublicKey::from_pkcs1_pem(&pub_key_string).unwrap());
+        UserAuthData { username: None, password: None, pub_key }
+    }
 }
 
 impl TryFrom<i16> for NATType {
@@ -114,6 +159,40 @@ pub fn validate_password(conn: &mut PgConnection, input_username: String, input_
     }  
 }
 
+pub fn generate_rsa_keypair() -> (RsaPrivateKey, RsaPublicKey) {
+    let mut rng = OsRng;
+    let private_key = RsaPrivateKey::new(&mut rng, 3072)
+        .expect("Failed to generate RSA keypair!");
+    let public_key = RsaPublicKey::from(&private_key);
+    (private_key, public_key)
+}
+
+pub fn rsa_encrypt_message(public_key: &RsaPublicKey, message: &[u8]) -> Vec<u8> {
+    let mut rng = OsRng;
+    public_key.encrypt(&mut rng, Pkcs1v15Encrypt, message)
+        .expect("Failed to encrypt message!")
+}
+
+pub fn rsa_decrypt_message(private_key: &RsaPrivateKey, message: &[u8]) -> Vec<u8> {
+    private_key.decrypt(Pkcs1v15Encrypt, message)
+        .expect("Failed to decrypt message!")
+}
+
+pub fn get_rsa_keypair() -> (RsaPrivateKey, RsaPublicKey) {
+    let priv_key = match RsaPrivateKey::read_pkcs1_pem_file("priv_key.pem") {
+        Ok(key) => key,
+        Err(e) => {
+            println!("Private key file not found! {e}");
+            let (priv_key, _pub_key) = generate_rsa_keypair();
+            priv_key.write_pkcs1_pem_file("priv_key.pem", rsa::pkcs8::LineEnding::LF)
+                .expect("Failed to write private key file!");
+            priv_key
+        }
+    };
+    let pub_key = priv_key.to_public_key();
+    (priv_key, pub_key)
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -151,5 +230,14 @@ mod tests {
             );
         delete_user(&mut conn, test_user.username);
         assert_eq!(result, Ok(false))
+    }
+
+    #[test]
+    fn test_rsa_crypto() {
+        let (private_key, public_key) = generate_rsa_keypair();
+        let some_data = b"some test data";
+        let encrypted = rsa_encrypt_message(&public_key, some_data);
+        let decrypted = rsa_decrypt_message(&private_key, &encrypted);
+        assert_eq!(some_data.to_vec(), decrypted);
     }
 }

@@ -8,4 +8,8 @@ bcrypt = "0.18.0"
 diesel = { version = "2.3.6", features = ["postgres", "network-address", "numeric"] }
 dotenvy = { version = "0.15" }
 ipnetwork = "0.21.1"
-rand = "0.10.0"
+rand = "0.8.0"
+rsa = "0.9.10"
+
+[profile.dev]
+opt-level = 3
