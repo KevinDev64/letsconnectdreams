@@ -64,7 +64,6 @@ fn pubkey_message(client: &mut NetworkClient, raw_length: &[u8; 4], stream: &mut
 fn helloo_message(client: &mut NetworkClient, raw_length: &[u8; 4], priv_key: RsaPrivateKey, stream: &mut TcpStream) {
     println!("HELLOO message from {}", client.peer);
     let pub_key = client.auth_data.as_ref().unwrap().pub_key.as_ref().unwrap();
-    println!("clllllll {:?}", pub_key);
     let length = u32::from_be_bytes(*raw_length);
     let data = receive_raw_data(stream, length).unwrap();
     let decrypted_raw = rsa_decrypt_message(&priv_key, &data);
