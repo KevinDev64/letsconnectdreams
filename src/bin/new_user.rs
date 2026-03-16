@@ -1,5 +1,5 @@
 use std::env::args;
-use letsconnectdreams::*;
+use letsconnectdreams::db;
 
 fn main() {
     let username = args()
@@ -9,8 +9,8 @@ fn main() {
         .nth(2)
         .expect("Enter a correct password!");
 
-    let connection = &mut establish_connection();
-    let new_user = new_user(connection, username, password);
+    let connection = &mut db::establish_connection();
+    let new_user = db::users::new_user(connection, username, password);
 
     println!("{:#?}", new_user);
 }
