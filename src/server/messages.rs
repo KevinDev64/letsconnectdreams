@@ -7,10 +7,13 @@ use diesel::prelude::*;
 use rsa::pkcs1::EncodeRsaPublicKey;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 
+use crate::Presence;
 use crate::server::{NetworkClient, UserAuthData};
 use crate::server::{receive_raw_data, receive_utf8_data};
 use crate::crypto::rsa::*;
 use crate::crypto::auth::validate_password;
+use crate::users::get_user_by_username;
+use crate::users::update_presence;
 
 pub fn abortt_handler(client: &mut NetworkClient, stream: TcpStream) -> Result<(), std::io::Error> {
     println!("ABORTT message from {}", client.peer);
@@ -84,10 +87,18 @@ pub fn authin_handler(
     let auth_data = rsa_decrypt_message(&priv_key, &data);
     let auth_data = UserAuthData::from_bytes(&auth_data);
     if validate_password(conn, auth_data.username.as_ref().unwrap(), auth_data.password.unwrap()).unwrap() {
-        println!("AUTHOK response to {}", auth_data.username.unwrap());
+        println!("AUTHOK response to {}", auth_data.username.as_ref().unwrap());
         let mut answer_buffer = [0_u8; 12];
         answer_buffer[2..8].copy_from_slice(b"AUTHOK");
         client.is_authorized = true; 
+        client.user = match get_user_by_username(auth_data.username.as_ref().unwrap(), conn) {
+            Ok(user) => { Some(user) },
+            Err(()) => {
+                panic!("Authorized unknown user!");
+            }
+        };
+        println!("{:#?}", client.user);
+        update_presence(conn, client, Presence::Online).unwrap();
         stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer!");
     } else {
         println!("AUTHER response to {}", auth_data.username.unwrap());

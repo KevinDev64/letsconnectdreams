@@ -49,6 +49,27 @@ impl TryFrom<i16> for NATType {
     }
 }
 
+#[derive(Debug)]
+pub enum Presence {
+    Offline = 0,
+    Online,
+    Connecting,
+    Punching
+}
+
+impl TryFrom<i16> for Presence {
+    type Error = ();
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Presence::Offline),
+            1 => Ok(Presence::Online),
+            2 => Ok(Presence::Connecting),
+            3 => Ok(Presence::Punching),
+            _ => Err(())
+        }
+    }
+}
+
 impl UserAuthData {
     pub fn from_bytes(auth_data: &[u8]) -> UserAuthData {
         let mut auth_data = str::from_utf8(&auth_data)

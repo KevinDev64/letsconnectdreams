@@ -1,8 +1,8 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    users (user_id) {
-        user_id -> Int8,
+    users (id) {
+        id -> Int8,
         #[max_length = 64]
         username -> Varchar,
         #[max_length = 255]

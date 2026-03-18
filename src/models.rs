@@ -2,11 +2,11 @@ use diesel::prelude::*;
 use ipnetwork::IpNetwork;
 use std::time::SystemTime;
 
-#[derive(Queryable, Selectable, Debug)]
+#[derive(Queryable, Selectable, AsChangeset, Identifiable, Debug, Clone)]
 #[diesel(table_name = crate::schema::users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct User {
-    pub user_id: i64,
+    pub id: i64,
     pub username: String,
     pub password_hash: String,
     pub presence: i16,
