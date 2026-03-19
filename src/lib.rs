@@ -1,205 +1,87 @@
-use diesel::prelude::*;
-use dotenvy::dotenv;
-use rand::rngs::OsRng;
-use rsa::pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey};
-use std::{env, fmt::Display};
+use rand::Rng;
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, UdpSocket};
+use ipnetwork::{IpNetwork, Ipv4Network};
 
-use self::models::{NewUser, User};
-use bcrypt::{self, DEFAULT_COST};
-
-use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
+const STUN_BINDING_REQUEST: u16 = 0x0001;
+const STUN_MAGIC_COOKIE: u32 = 0x2112A442;
+const STUN_SERVER: &str = "stun.nextcloud.com:443";
 
 pub mod models;
 pub mod schema;
+pub mod server;
+pub mod crypto;
+pub mod db;
 
-pub enum NATType {
-    Unknown = 0,
-    FullCone,
-    Restricted, 
-    PortRestricted, 
-    Symmetric 
-}
+pub use crypto::*;
+pub use server::*;
+pub use db::*;
 
-pub enum Message {
-    AUTHIN(UserAuthData),
-    AUTHOK(String),
-    AUTHER(String),
-    ECHO(String),
-    ABORTT,
-}
+fn parse_stun_response(buf: &[u8]) -> Result<(IpNetwork, u16), Box<dyn std::error::Error>> {
+    let mut i = 20; 
+    let mut ip = [0_u8; 4];
+    let mut port: u16 = 0;
 
-impl Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self)
-    }
-}
+    while i < buf.len() {
+        let attr_type = u16::from_be_bytes([buf[i], buf[i + 1]]);
+        let attr_len = u16::from_be_bytes([buf[i + 2], buf[i + 3]]) as usize;
+        i += 4;
 
-#[derive(Debug)]
-pub struct NetworkClient {
-    pub peer: SocketAddr,
-    pub is_authorized: bool,
-    pub user: Option<User>,
-    pub auth_data: Option<UserAuthData>
-}
-
-#[derive(Debug)]
-pub struct UserAuthData {
-    pub username: Option<String>,
-    pub password: Option<String>,
-    pub pub_key: Option<RsaPublicKey>
-}
-
-impl UserAuthData {
-    pub fn from_bytes(auth_data: &[u8]) -> UserAuthData {
-        let mut auth_data = str::from_utf8(&auth_data)
-            .unwrap()
-            .split_ascii_whitespace();
-        let username = Some(auth_data.next().unwrap().to_string());
-        let password = Some(auth_data.next().unwrap().to_string()) ;
-
-        UserAuthData { username, password, pub_key: None }
-    }
-
-    pub fn init_pubkey(pub_key_string: String) -> UserAuthData {
-        let pub_key = Some(RsaPublicKey::from_pkcs1_pem(&pub_key_string).unwrap());
-        UserAuthData { username: None, password: None, pub_key }
-    }
-}
-
-impl TryFrom<i16> for NATType {
-    type Error = ();
-    fn try_from(value: i16) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(NATType::Unknown),
-            1 => Ok(NATType::FullCone),
-            2 => Ok(NATType::Restricted),
-            3 => Ok(NATType::PortRestricted),
-            4 => Ok(NATType::Symmetric),
-            _ => Err(())
-        }
-    }
-}
-
-pub fn establish_connection() -> PgConnection {
-    dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("Failed to parse ENV");
-    PgConnection::establish(&database_url)
-        .unwrap_or_else(|_| panic!("Failed to connect to DB!"))
-}
-
-pub fn new_user(conn: &mut PgConnection, username: String, password: String) -> User {
-    use crate::schema::users;
-
-    let new_user = NewUser { 
-        username: username, 
-        password_hash: hash_password(password)
-    };
-
-    diesel::insert_into(users::table)
-        .values(&new_user)
-        .returning(User::as_returning())
-        .get_result(conn)
-        .expect("Failed to create new user!")
-}
-
-pub fn delete_user(conn: &mut PgConnection, input_username: String) -> bool {
-    use crate::schema::users::dsl::*;
-
-    let is_deleted = match diesel::delete(users.filter(username.eq(input_username)))
-        .execute(conn)
-        .expect("Failed to delete user!") {
-            1 => true,
-            _ => false
-        };
-    is_deleted
-}
-
-pub fn list_users(conn: &mut PgConnection) -> Vec<User> {
-    use crate::schema::users::dsl::*;
-
-    let results = users
-        .select(User::as_select())
-        .load(conn)
-        .expect("Failed to load users!");
-    results
-}
-
-pub fn hash_password(password: String) -> String {
-    bcrypt::hash(password, DEFAULT_COST).unwrap()
-} 
-
-pub fn validate_password(conn: &mut PgConnection, input_username: &String, input_password: String) -> Result<bool, String> {
-    use crate::schema::users::dsl::*;
-
-    let db_password = match users
-        .select(password_hash)
-        .filter(username.eq(input_username))
-        .load::<String>(conn) {
-            Ok(hashed_password_vec) => {
-                if hashed_password_vec.len() == 0 {
-                    Err(String::from("user not found!"))
+        // XOR-MAPPED-ADDRESS
+        if attr_type == 0x0020 {
+            let family = buf[i + 1];
+            port = u16::from_be_bytes([buf[i + 2], buf[i + 3]]) ^ ((STUN_MAGIC_COOKIE >> 16) as u16);
+            if family == 0x01 {
+                for j in 0..4 {
+                    ip[j] = buf[i + 4 + j] ^ (STUN_MAGIC_COOKIE.to_be_bytes()[j]);
                 }
-                else {
-                    Ok(hashed_password_vec[0].clone())
-                }
-            },
-            Err(err) => Err(format!("DB error! {err}", ))
-        };
-    match db_password {
-        Ok(db_password) => {
-            if bcrypt::verify(input_password, db_password.as_str()).unwrap() {
-                return Ok(true);
-            } else { 
-                return Ok(false);
             }
-        },
-        Err(err) => Err(err)
-    }  
-}
-
-pub fn generate_rsa_keypair() -> (RsaPrivateKey, RsaPublicKey) {
-    let mut rng = OsRng;
-    let private_key = RsaPrivateKey::new(&mut rng, 3072)
-        .expect("Failed to generate RSA keypair!");
-    let public_key = RsaPublicKey::from(&private_key);
-    (private_key, public_key)
-}
-
-pub fn rsa_encrypt_message(public_key: &RsaPublicKey, message: &[u8]) -> Vec<u8> {
-    let mut rng = OsRng;
-    public_key.encrypt(&mut rng, Pkcs1v15Encrypt, message)
-        .expect("Failed to encrypt message!")
-}
-
-pub fn rsa_decrypt_message(private_key: &RsaPrivateKey, message: &[u8]) -> Vec<u8> {
-    private_key.decrypt(Pkcs1v15Encrypt, message)
-        .expect("Failed to decrypt message!")
-}
-
-pub fn get_rsa_keypair() -> (RsaPrivateKey, RsaPublicKey) {
-    let priv_key = match RsaPrivateKey::read_pkcs1_pem_file("priv_key.pem") {
-        Ok(key) => key,
-        Err(e) => {
-            println!("Private key file not found! {e}");
-            let (priv_key, _pub_key) = generate_rsa_keypair();
-            priv_key.write_pkcs1_pem_file("priv_key.pem", rsa::pkcs8::LineEnding::LF)
-                .expect("Failed to write private key file!");
-            priv_key
         }
-    };
-    let pub_key = priv_key.to_public_key();
-    (priv_key, pub_key)
+
+        i += attr_len;
+        if attr_len % 4 != 0 {
+            i += 4 - (attr_len % 4);
+        }
+    }
+
+    return Ok((IpNetwork::V4(
+                Ipv4Network::new(
+                    Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]), 
+                    0_u8)
+                .unwrap()), 
+                port))
+
+}
+
+fn get_address_from_stun() -> Result<(IpNetwork, u16), Box<dyn std::error::Error>> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
+    let mut buf = [0u8; 20];
+
+    buf[0..2].copy_from_slice(&STUN_BINDING_REQUEST.to_be_bytes());
+    buf[2..4].copy_from_slice(&0u16.to_be_bytes());
+    buf[4..8].copy_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+
+    let mut rng = rand::thread_rng();
+    for i in 8..20 {
+        buf[i] = rng.r#gen();
+    }
+
+    socket.send_to(&buf, STUN_SERVER)?;
+    let mut response = [0u8; 1024];
+    let (size, _) = socket.recv_from(&mut response)?;
+
+    parse_stun_response(&response[..size])
 }
 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn auth_test_on_user() {
+        use crate::crypto::auth::validate_password;
+        use crate::db::{establish_connection, users::*};
+
         let mut conn = establish_connection();
         let test_user = new_user(
             &mut conn, 
@@ -217,6 +99,9 @@ mod tests {
 
     #[test]
     fn wrong_auth_on_test_user() {
+        use crate::crypto::auth::validate_password;
+        use crate::db::{establish_connection, users::*};
+
         let mut conn = establish_connection();
         let test_user = new_user(
             &mut conn, 
@@ -234,6 +119,7 @@ mod tests {
 
     #[test]
     fn test_rsa_crypto() {
+        use crate::crypto::rsa::*;
         let (private_key, public_key) = generate_rsa_keypair();
         let some_data = b"some test data";
         let encrypted = rsa_encrypt_message(&public_key, some_data);
