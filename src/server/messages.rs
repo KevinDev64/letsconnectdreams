@@ -1,11 +1,9 @@
-use std::net::Ipv4Addr;
 use std::net::TcpStream;
 use std::net::Shutdown;
 use std::io::prelude::*;
 
 use diesel::prelude::*;
 
-use ipnetwork::Ipv4Network;
 use rsa::pkcs1::EncodeRsaPublicKey;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 
@@ -90,7 +88,7 @@ pub fn authin_handler(
     let auth_data = rsa_decrypt_message(&priv_key, &data);
     let auth_data = UserAuthData::from_bytes(&auth_data);
     if validate_password(conn, auth_data.username.as_ref().unwrap(), auth_data.password.unwrap()).unwrap() {
-        println!("AUTHOK response to {}", auth_data.username.as_ref().unwrap());
+        println!("AUTHOK response to {}", client.peer);
         let mut answer_buffer = [0_u8; 12];
         answer_buffer[2..8].copy_from_slice(b"AUTHOK");
         client.is_authorized = true; 
@@ -100,11 +98,10 @@ pub fn authin_handler(
                 panic!("Authorized unknown user!");
             }
         };
-        println!("{:#?}", client.user);
         update_presence(conn, client, Presence::Online).unwrap();
         stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer!");
     } else {
-        println!("AUTHER response to {}", auth_data.username.unwrap());
+        println!("AUTHER response to {}", client.peer);
         let mut answer_buffer = [0_u8; 12];
         answer_buffer[2..8].copy_from_slice(b"AUTHER");
         stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer!");
