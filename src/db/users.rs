@@ -1,4 +1,5 @@
 use diesel::prelude::*;
+use ipnetwork::IpNetwork;
 use crate::NetworkClient;
 use crate::crypto::auth::hash_password;
 use crate::models::*;
@@ -58,6 +59,27 @@ pub fn get_user_by_username(query: &String, conn: &mut PgConnection) -> Result<U
 
 pub fn update_presence(conn: &mut PgConnection, client: &mut NetworkClient, new_state: Presence) -> Result<(), Box<dyn std::error::Error>> {
     client.user.as_mut().unwrap().presence = new_state as i16;
+    let new_user = client.user.as_ref().unwrap().save_changes::<User>(conn)?;
+    client.user = Some(new_user);
+    Ok(())
+}
+
+pub fn update_address_and_port(
+        conn: &mut PgConnection, 
+        client: &mut NetworkClient, 
+        new_addr: Option<&str>, 
+        new_port: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(addr) = new_addr {
+        let new_addr = IpNetwork::V4(new_addr.unwrap().parse().unwrap());
+        let new_port: i32 = new_port.unwrap().parse().unwrap();
+        client.user.as_mut().unwrap().public_ip = Some(new_addr);
+        client.user.as_mut().unwrap().public_port = Some(new_port);
+        let new_user = client.user.as_ref().unwrap().save_changes::<User>(conn)?;
+        client.user = Some(new_user);
+        return Ok(())
+    }
+    client.user.as_mut().unwrap().public_ip = None;
+    client.user.as_mut().unwrap().public_port = None;
     let new_user = client.user.as_ref().unwrap().save_changes::<User>(conn)?;
     client.user = Some(new_user);
     Ok(())

@@ -140,6 +140,9 @@ pub fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKe
                 "HELLOO" => {
                     helloo_handler(&mut this_connection, raw_length, priv_key.clone(), &mut stream);
                 },
+                "UPDADR" => {
+                    updadr_handler(&mut this_connection, priv_key.clone(), raw_length, &mut conn, &mut stream);
+                },
                 "\0\0\0\0\0\0" => {
                     println!("Client closed the connection.");
                     this_connection.is_authorized = false;

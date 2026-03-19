@@ -1,9 +1,11 @@
+use std::net::Ipv4Addr;
 use std::net::TcpStream;
 use std::net::Shutdown;
 use std::io::prelude::*;
 
 use diesel::prelude::*;
 
+use ipnetwork::Ipv4Network;
 use rsa::pkcs1::EncodeRsaPublicKey;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 
@@ -13,6 +15,7 @@ use crate::server::{receive_raw_data, receive_utf8_data};
 use crate::crypto::rsa::*;
 use crate::crypto::auth::validate_password;
 use crate::users::get_user_by_username;
+use crate::users::update_address_and_port;
 use crate::users::update_presence;
 
 pub fn abortt_handler(client: &mut NetworkClient, stream: TcpStream) -> Result<(), std::io::Error> {
@@ -106,4 +109,30 @@ pub fn authin_handler(
         answer_buffer[2..8].copy_from_slice(b"AUTHER");
         stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer!");
     }
+}
+
+pub fn updadr_handler(
+        client: &mut NetworkClient,
+        priv_key: RsaPrivateKey,
+        raw_length: &[u8; 4],
+        conn: &mut PgConnection,
+        stream: &mut TcpStream ) {
+    println!("UPDADR request from {}", client.peer);
+    if !(client.is_authorized) {
+        let mut answer_buffer = [0_u8; 12];
+        answer_buffer[2..8].copy_from_slice(b"FORBID");
+        stream.write_all(&mut answer_buffer).expect("Failed to send FORBID answer!");
+        return;
+    }
+    let length = u32::from_be_bytes(*raw_length);
+    let data = receive_raw_data(stream, length).unwrap();
+    let data = rsa_decrypt_message(&priv_key, &data);
+    let data = str::from_utf8(&data).unwrap();
+    let data: Vec<&str> = data.split_ascii_whitespace().collect();
+    update_address_and_port(
+        conn, 
+        client, 
+        data.get(0).map(|v| &**v), 
+        data.get(1).map(|v| &**v)).unwrap();
+    println!("{:?}", data);
 }
