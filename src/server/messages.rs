@@ -15,9 +15,10 @@ use crate::crypto::auth::validate_password;
 use crate::users::get_user_by_username;
 use crate::users::update_presence;
 
-pub fn abortt_handler(client: &mut NetworkClient, stream: TcpStream) -> Result<(), std::io::Error> {
+pub fn abortt_handler(client: &mut NetworkClient, conn: &mut PgConnection, stream: TcpStream) -> Result<(), std::io::Error> {
     println!("ABORTT message from {}", client.peer);
     client.is_authorized = false;
+    update_presence(conn, client, Presence::Offline);
     stream.shutdown(Shutdown::Both)
 }
 

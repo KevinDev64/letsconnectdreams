@@ -122,7 +122,7 @@ pub fn handle_client(mut stream: TcpStream, keypair: (RsaPrivateKey, RsaPublicKe
             let raw_length = raw_length.as_array().unwrap();
             match str::from_utf8(&header_buffer[2..8]).unwrap() {
                 "ABORTT" => {
-                    abortt_handler(&mut this_connection, stream).unwrap();
+                    abortt_handler(&mut this_connection, &mut conn, stream).unwrap();
                     break;
                 },
                 "ECHOOO" => {
