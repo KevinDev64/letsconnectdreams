@@ -18,7 +18,7 @@ use crate::users::update_presence;
 pub fn abortt_handler(client: &mut NetworkClient, conn: &mut PgConnection, stream: TcpStream) -> Result<(), std::io::Error> {
     println!("ABORTT message from {}", client.peer);
     client.is_authorized = false;
-    update_presence(conn, client, Presence::Offline);
+    update_presence(conn, client, Presence::Offline).expect("Failed to update user presence!");
     stream.shutdown(Shutdown::Both)
 }
 
@@ -99,7 +99,7 @@ pub fn authin_handler(
             }
         };
         println!("{:#?}", client.user);
-        update_presence(conn, client, Presence::Online).unwrap();
+        update_presence(conn, client, Presence::Online).expect("Failed to update user presence!");
         stream.write_all(&answer_buffer).expect("Failed to send AUTHIN answer!");
     } else {
         println!("AUTHER response to {}", auth_data.username.unwrap());
