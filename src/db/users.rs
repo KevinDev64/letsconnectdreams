@@ -57,6 +57,11 @@ pub fn get_user_by_username(query: &String, conn: &mut PgConnection) -> Result<U
 }
 
 pub fn update_presence(conn: &mut PgConnection, client: &mut NetworkClient, new_state: Presence) -> Result<(), Box<dyn std::error::Error>> {
+    if let None = client.user.as_ref().to_owned() {
+        println!("bug: updating presence when user not authorized");
+        return Ok(())
+        // TODO: error 
+    }
     client.user.as_mut().unwrap().presence = new_state as i16;
     let new_user = client.user.as_ref().unwrap().save_changes::<User>(conn)?;
     client.user = Some(new_user);
